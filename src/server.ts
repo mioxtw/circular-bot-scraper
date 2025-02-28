@@ -5,6 +5,9 @@ import { logger } from './utils/logger';
 import { config } from './config/config';
 import { getLatestWalletIds } from './utils/dataProcessor';
 import { TransactionAnalysisService } from './services/TransactionAnalysisService';
+import fs from 'fs';
+import path from 'path';
+import { promisify } from 'util';
 
 export class Server {
   private static instance: Server;
@@ -108,10 +111,10 @@ export class Server {
     });
 
     // 获取最新 Mints 列表接口
-    this.app.get('/api/latest-mintslist', async (req, res) => {
+    this.app.get('/api/analyze-latest-mintslist', async (req, res) => {
       try {
         // 从查询参数中获取要处理的钱包数量，默认为 1
-        const walletCount = parseInt(req.query.walletCount as string) || 1;
+        const walletCount = parseInt(req.query.walletCount as string) || 5;
 
         // 获取最新的钱包ID列表
         const walletIds = await getLatestWalletIds(1);
@@ -140,10 +143,33 @@ export class Server {
           mintResults.flat()
         ));
 
-        // 打印结果到控制台
-        logger.info('Mint 搜索结果:', JSON.stringify(allMints, null, 2));
+        // 添加保存结果到本地文件的逻辑
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const dataDir = path.join(process.cwd(), 'data', 'mints');
 
-        // 返回结果
+        // 确保目录存在
+        await fs.promises.mkdir(dataDir, { recursive: true });
+
+        // 构建输出数据
+        const outputData = {
+          timestamp,
+          walletCount,
+          totalMints: allMints.length,
+          mints: allMints,
+          walletIds: walletIds.slice(0, walletCount)
+        };
+
+        // 保存到文件
+        const filename = `mints-${timestamp}.json`;
+        await fs.promises.writeFile(
+          path.join(dataDir, filename),
+          JSON.stringify(outputData, null, 2),
+          'utf-8'
+        );
+
+        logger.info(`已将 Mint 列表保存到文件: ${filename}`);
+
+        // 返回结果，现在包含更多信息
         res.json(allMints);
       } catch (error) {
         logger.error('获取最新 Mints 列表失败：', error);
@@ -190,6 +216,41 @@ export class Server {
           error: 'Transaction analysis failed',
           details: error instanceof Error ? error.message : 'Unknown error'
         });
+      }
+    });
+
+    // 获取本地最新 Mints 列表接口
+    this.app.get('/api/latest-mintslist', async (_, res) => {
+      try {
+        const dataDir = path.join(process.cwd(), 'data', 'mints');
+
+        // 获取目录下所有文件
+        const files = await fs.promises.readdir(dataDir);
+
+        // 按文件名（包含时间戳）排序，获取最新的文件
+        const latestFile = files
+          .filter(file => file.startsWith('mints-') && file.endsWith('.json'))
+          .sort()
+          .reverse()[0];
+
+        if (!latestFile) {
+          return res.json([]);
+        }
+
+        // 读取文件内容
+        const fileContent = await fs.promises.readFile(
+          path.join(dataDir, latestFile),
+          'utf-8'
+        );
+
+        // 解析 JSON 并只返回 mints 数组
+        const { mints } = JSON.parse(fileContent);
+
+        // 直接返回 mints 数组
+        res.json(mints);
+      } catch (error) {
+        logger.error('读取本地 Mints 列表失败：', error);
+        res.status(500).json([]);
       }
     });
   }
