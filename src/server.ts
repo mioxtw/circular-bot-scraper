@@ -94,6 +94,56 @@ export class Server {
       }
     });
 
+    // Mint 搜索接口：GET + 只回 mintAddress 陣列
+    this.app.get('/api/mint-search', async (req, res) => {
+      try {
+        // 1. 讀 query 參數
+        const { walletAddress } = req.query as { walletAddress?: string };
+        const filterFailed =
+          req.query.filterFailed === 'true' || req.query.filterFailed === '1';
+        const maxTxCount = Number.parseInt(
+          (req.query.maxTxCount as string) ?? '100',
+          10
+        );
+
+        logger.info('Mint 搜索請求參數:', {
+          walletAddress,
+          filterFailed,
+          maxTxCount
+        });
+
+        // 2. 基本驗證
+        if (!walletAddress) {
+          return res
+            .status(400)
+            .json({ success: false, error: 'Wallet address is required' });
+        }
+
+        // 3. 呼叫服務並「只取 mintAddress」
+        const serviceResult = await this.mintSearchService.getRecentMintTransactions(
+          walletAddress,
+          filterFailed,
+          maxTxCount
+        );
+        // 根據你目前的回傳結構 serviceResult.data 是一個陣列
+        const mintAddresses: string[] = (serviceResult.data ?? []).map(
+          (item: { mintAddress: string }) => item.mintAddress
+        );
+
+        // 4. 直接把純陣列送回去 (不再包 success、data)
+        // 如果你想保留 success 包裝，把 res.json(mintAddresses) 改成下行即可：
+        // return res.json({ success: true, data: mintAddresses });
+        return res.json(mintAddresses);
+      } catch (error) {
+        logger.error('Mint 搜索失敗：', error);
+        return res.status(500).json({
+          success: false,
+          error: 'Mint search failed',
+          details: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    });
+
     // 获取最新数据接口
     this.app.get('/api/latest', (_, res) => {
       try {
